@@ -1,0 +1,8 @@
+﻿## Interface: 70200
+## Title: |cffEE3A8CSmartHealing|r
+## Version: 0.2
+## Author: Paopao001
+
+libs\load_libs.xml
+init.lua
+core.lua
