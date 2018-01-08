@@ -13,7 +13,7 @@ local ismoving = false
 ----------------------------------------------------------
 --------------------[[     API     ]]---------------------
 ----------------------------------------------------------
-F.GetLowSurvivalInRange = function(perc)
+F.GetLowSurvivalInRange_Absolute = function(perc)
 	local t = {}
 	
 	if IsInGroup() then
@@ -33,12 +33,32 @@ F.GetLowSurvivalInRange = function(perc)
 	end
 end
 
+F.GetLowSurvivalInRange = function(perc)
+	local t = {}
+	
+	if IsInGroup() then
+		for name, info in pairs(Smarthealing['RaidRoster']) do
+			if info.inRange and info.active and info.sur and (not perc or info.sur <= perc) and info.heal_block and info.heal_block < 80 then
+				table.insert(t, info)
+			end
+		end
+	else
+		return
+	end
+	
+	table.sort(t, function(a,b) return a.sur < b.sur or (a.sur == b.sur and a.hp < b.hp) end)
+	
+	if #t > 0 then
+		return t[1]["name"], t[1]["sur"], #t
+	end
+end
+
 F.GetLowSurvivalInRangeForMelee = function(perc)
 	local t = {}
 	
 	if IsInRaid() then
 		for name, info in pairs(Smarthealing['RaidRoster']) do
-			if info.inRange and info.active and info.role and (info.role == "tank" or info.role == "melee") and info.sur and info.sur <= perc then
+			if info.inRange and info.active and info.role and (info.role == "tank" or info.role == "melee") and info.sur and info.sur <= perc and info.heal_block and info.heal_block < 80 then
 				table.insert(t, info)
 			end
 		end
@@ -58,7 +78,7 @@ F.GetLowSurvivalInRangeForRanged = function(perc)
 	
 	if IsInRaid() then
 		for name, info in pairs(Smarthealing['RaidRoster']) do
-			if info.inRange and info.active and info.role and (info.role == "ranged" or info.role == "healer") and info.sur and info.sur <= perc then
+			if info.inRange and info.active and info.role and (info.role == "ranged" or info.role == "healer") and info.sur and info.sur <= perc and info.heal_block and info.heal_block < 80 then
 				table.insert(t, info)
 			end
 		end
@@ -148,6 +168,48 @@ F.GetBuffTargetInRange = function(num, ...)
 	end
 end
 
+F.GetHealBlockInRange = function()
+	local t = {}
+	
+	if IsInGroup() then
+		for name, info in pairs(Smarthealing['RaidRoster']) do
+			if info.inRange and info.active and info.sur and info.heal_block and info.heal_block >= 50 then
+				table.insert(t, info)
+			end
+		end
+	else
+		return
+	end
+	
+	table.sort(t, function(a,b) return a.sur < b.sur or (a.sur == b.sur and a.hp < b.hp) end) -- 按照生存系数排序
+	
+	if #t > 0 then
+		return t[1]["name"], t[1]["sur"], #t
+	end
+end
+
+F.GetHotTargetsInRange = function()
+	if not SH_CDB["General"]["hot"] then return end
+	
+	local t = {}
+	
+	if IsInGroup() then
+		for name, info in pairs(Smarthealing['RaidRoster']) do
+			if info.inRange and info.active and info.hot and info.hot > 0 then
+				table.insert(t, info)
+			end
+		end
+	else
+		return
+	end
+	
+	table.sort(t, function(a,b) return a.sur < b.sur or (a.sur == b.sur and a.hp < b.hp) end) -- 按照生存系数排序
+	
+	if #t > 0 then
+		return t[1]["name"], t[1]["sur"], #t
+	end
+end
+
 F.GetBuffedTargetInRange = function(num, ...)
 	local t = {}
 	local buffs = {...}
@@ -213,8 +275,12 @@ local GroupNeedHeal = function()
 	
 	if IsInGroup() then
 		for name, info in pairs(Smarthealing['RaidRoster']) do
-			if info.active and info.hp_perc and info.hp_perc <= safe_perc then
-				return true
+			if info.active then
+				if info.hp_perc and info.hp_perc <= safe_perc then
+					return true
+				elseif SH_CDB["General"]["hot"] and info.hot and info.hot > 0 then
+					return true
+				end
 			end
 		end
 	else
@@ -250,6 +316,44 @@ local IsItemUsable = function(itemID)
 		if start and duration < 2 then
 			return true
 		end
+	end
+end
+
+local UseTrinkets = function(name, sur)
+	if not SH_CDB["General"]["trinkets"] then return true end
+	
+	local heal_absorb = UnitGetTotalHealAbsorbs(name)
+	local hp_max = UnitHealthMax(name)
+	local sur_no_absorb
+	if heal_absorb and hp_max and hp_max > 0 then			
+		sur_no_absorb = sur - heal_absorb/hp_max*100 -- 排除吸收因素
+	end
+	
+	if sur_no_absorb and sur_no_absorb < 25 then -- 可以用吸收类饰品
+		if IsItemUsable(151957) then -- 邪能护盾
+			return 253277, name
+		elseif IsItemUsable(147007) then -- 蓝图
+			return 242622, name
+		end
+	elseif IsItemUsable(147006) then -- 信仰档案
+		return 242619, name
+	end
+end
+
+local UseDefensiveCD = function(spellID, tpye, sur)
+	if not SH_CDB["General"]["cd"] then return true end
+	
+	local heal_absorb = UnitGetTotalHealAbsorbs(name)
+	local hp_max = UnitHealthMax(name)
+	local sur_no_absorb
+	if heal_absorb and hp_max and hp_max > 0 then			
+		sur_no_absorb = sur - heal_absorb/hp_max*100 -- 排除吸收因素
+	end
+	
+	if sur_no_absorb and sur_no_absorb < 25 then -- 可以用减伤技能
+		
+	elseif IsItemUsable(147006) then -- 守护之魂
+		return 242619, name
 	end
 end
 
@@ -326,13 +430,48 @@ end
 ----------------------------------------------------------
 -------------[[     团队框架上加图标     ]]---------------
 ----------------------------------------------------------
+local Icons = {}
+
+local function editIcon(frame, t)
+	if t == "all" or t == "size" then
+		local size = SH_CDB["Layout"]["size"]
+		
+		frame:SetSize(size, size)
+		
+		if frame.overlay and frame:IsShown() then
+			frame:Hide()
+			frame:Show()
+		end
+	end
+	
+	if t == "all" or t == "anchor" then	
+		frame:ClearAllPoints()
+		frame:SetPoint(SH_CDB["Layout"]["anchor"])
+	end
+	
+	if t == "all" or t == "glow" then
+		if SH_CDB["Layout"]["glow"] then
+			ActionButton_ShowOverlayGlow(frame)
+			frame:SetScript("OnShow", function() ActionButton_ShowOverlayGlow(frame) end)
+			frame:SetScript("OnHide", function() ActionButton_HideOverlayGlow(frame) end)
+		else
+			ActionButton_HideOverlayGlow(frame)
+			frame:SetScript("OnShow", nil)
+			frame:SetScript("OnHide", nil)
+		end
+	end
+end
+
+F.EditIcons = function(t)
+	for i, icon in pairs(Icons) do
+		editIcon(icon, t)
+	end
+end
 
 local function addIcon(parentFrame, action, spellID)
 	if not parentFrame.SHF then
 		local frame = CreateFrame("Frame", nil, parentFrame)
 		frame:SetFrameStrata("HIGH")
-		frame:SetSize(size, size)
-		frame:SetPoint(anchor)
 		frame:Hide()
 		
 		local texture = frame:CreateTexture(nil,"HIGH")
@@ -341,10 +480,10 @@ local function addIcon(parentFrame, action, spellID)
 		texture:SetTexCoord(0.1, 0.9, 0.1, 0.9)
 		frame.texture = texture
 		
-		frame:SetScript("OnShow", function() ActionButton_ShowOverlayGlow(frame) end)
-		frame:SetScript("OnHide", function() ActionButton_HideOverlayGlow(frame) end)
-		
+		editIcon(frame, "all")
 		parentFrame.SHF = frame
+		
+		table.insert(Icons, frame) 
 	end
 	
 	if action == "show" and parentFrame.SHF.spellID ~= spellID then
@@ -355,7 +494,6 @@ local function addIcon(parentFrame, action, spellID)
 		parentFrame.SHF.spellID = 0
 		parentFrame.SHF.texture:SetTexture(G.blank)
 		parentFrame.SHF:Hide()
-	
 	end
 end
 
@@ -504,15 +642,15 @@ SmartSpells["SHAMAN"] = function(mode)
 			if IsSpellUsable(61295) then -- 能用激流用激流
 				G.current_spell, G.current_target = 61295, target
 			elseif perc < 25 then -- 紧急救人
-				if IsItemUsable(147006) then
-					G.current_spell, G.current_target = 242619, target
+				if UseTrinkets(target, perc) then
+					G.current_spell, G.current_target = UseTrinkets(target, perc)
 				else
 					G.current_spell, G.current_target = 8004, target
 				end
 			elseif HasBuff(157503) and (HasBuff(114052) or HasBuff(108281)) then -- 暴雨 + 升腾/先祖
 				local melee_chain_target, _, melee_num = F.GetLowSurvivalInRangeForMelee(ae_perc*1.3)
 				local range_chain_target, _, range_num = F.GetLowSurvivalInRangeForRanged(ae_perc*1.3)
-				if perc < 60 and IsItemUsable(147006) then
+				if perc < 60 and SH_CDB["General"]["trinkets"] and IsItemUsable(147006) then
 					G.current_spell, G.current_target = 242619, target
 				elseif melee_num and melee_num >= 3 then
 					G.current_spell, G.current_target = 1064, melee_chain_target
@@ -538,14 +676,14 @@ SmartSpells["SHAMAN"] = function(mode)
 			if IsSpellUsable(61295) then -- 能用激流用激流
 				G.current_spell, G.current_target = 61295, target
 			elseif perc < 25 then -- 紧急救人
-				if IsItemUsable(147006) then
-					G.current_spell, G.current_target = 242619, target
+				if UseTrinkets(target, perc) then
+					G.current_spell, G.current_target = UseTrinkets(target, perc)
 				else
 					G.current_spell, G.current_target = 8004, target
 				end
 			elseif HasBuff(157503) and (HasBuff(114052) or HasBuff(108281)) then -- 暴雨 + 升腾/先祖
 				local chain_target, _, chain_num = F.GetLowSurvivalInRange(ae_perc*1.3)
-				if perc < 60 and IsItemUsable(147006) then
+				if perc < 60 and SH_CDB["General"]["trinkets"] and IsItemUsable(147006) then
 					G.current_spell, G.current_target = 242619, target
 				elseif chain_num and chain_num >= 4 then
 					G.current_spell, G.current_target = 1064, chain_target
@@ -578,8 +716,10 @@ SmartSpells["PALADIN"] = function(mode)
 		local tank_target, tank_perc = F.GetLowSurvivalTankOrMe()		
 		if IsSpellUsable(20473) then -- 震击好了用震击
 			G.current_spell, G.current_target = 20473, target
-		elseif target and perc < 25 and IsItemUsable(147006) then -- 紧急救人
-			G.current_spell, G.current_target = 242619, target
+		elseif target and perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
+			G.current_spell, G.current_target = UseTrinkets(target, perc)
+		elseif target and perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(6940) then -- 牺牲
+			G.current_spell, G.current_target = 6940, target
 		elseif IsSpellUsable(223306) then -- 赋予信仰好了给坦克或者自己用
 			G.current_spell, G.current_target = 223306, tank_target
 		elseif HasBuff(234862) then -- 玛尔拉德的临终之息
@@ -617,8 +757,10 @@ SmartSpells["DRUID"] = function(mode)
 	local tanking_target = F.GetLowSurvivalTanking()
 	
 	if target and perc < 40 then
-		if perc < 25 and IsItemUsable(147006) then -- 紧急救人
-			G.current_spell, G.current_target = 242619, target
+		if perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
+			G.current_spell, G.current_target = UseTrinkets(target, perc)
+		elseif perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(102342) then -- 铁木树皮
+			G.current_spell, G.current_target = 102342, target
 		elseif not (HasBuff(774, target) or HasBuff(155777, target)) then -- 没回春
 			G.current_spell, G.current_target = 774, target
 		elseif IsTalentChosen(6, 3) and not (HasBuff(774, target) and HasBuff(155777, target)) then -- 补满双回春
@@ -683,8 +825,10 @@ SmartSpells["PRIEST"] = function(mode)
 			end
 		elseif target and perc < 30 and IsSpellUsable(47540) then -- 苦修
 			G.current_spell, G.current_target = 47540, target
-		elseif target and perc < 25 and IsItemUsable(147006) then -- 紧急救人
-			G.current_spell, G.current_target = 242619, target
+		elseif target and perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
+			G.current_spell, G.current_target = UseTrinkets(target, perc)
+		elseif perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(33206) then -- 痛苦压制
+			G.current_spell, G.current_target = 33206, target
 		elseif target_ato and IsInRaid() and GetCountofBuff(194384) <= 5 and IsSpellUsable(194509) then
 			G.current_spell, G.current_target = 194509, target_ato -- 真言术：耀
 		elseif target_ato and IsInGroup() and not IsInRaid() and GetCountofBuff(194384) <= 3 then
@@ -710,7 +854,7 @@ SmartSpells["PRIEST"] = function(mode)
 		end
 	elseif my_spec == 2 then -- 神圣
 
-		if not GroupNeedHeal() and not IsSpellUsable(33076) and (not IsTalentChosen(2, 3) or hasbuff(139)) then  -- 所有血量都大于安全血线 愈合祷言不可用 选祈告时自己已经有恢复了 /sleep
+		if not GroupNeedHeal() and not IsSpellUsable(33076) and (not IsTalentChosen(2, 3) or Hasbuff(139)) then  -- 所有血量都大于安全血线 愈合祷言不可用 选祈告时自己已经有恢复了 /sleep
 			G.current_spell, G.current_target = nil, nil
 		else
 			local target, perc = F.GetLowSurvivalInRange() -- 安全血线以下的人
@@ -720,8 +864,10 @@ SmartSpells["PRIEST"] = function(mode)
 			
 			if target and perc < 50 and IsSpellUsable(2050) then -- 静
 				G.current_spell, G.current_target = 2050, target
-			elseif target and perc < 25 and IsItemUsable(147006) then -- 紧急救人
-				G.current_spell, G.current_target = 242619, target
+			elseif target and perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
+				G.current_spell, G.current_target = UseTrinkets(target, perc)
+			elseif perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(47788) then -- 守护之魂
+				G.current_spell, G.current_target = 47788, target
 			elseif target and perc < 70 and IsSpellUsable(208065) and not HasBuff(208065, target) then -- 图雷
 				G.current_spell, G.current_target = 208065, target
 			elseif tanking_target and tanking_perc < 85 and IsSpellUsable(2050) then -- 静

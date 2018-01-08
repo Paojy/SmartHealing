@@ -5,6 +5,11 @@ ns[2] = {} -- G, globals
 
 local F, G = unpack(ns)
 
+G.addon_name = "SmartHealing"
+G.addon_cname = "|cffEE3A8CSmart Healing|r"
+G.Version = GetAddOnMetadata("SmartHealing", "Version")
+G.Font = GameFontHighlight:GetFont()
+
 Smarthealing = LibStub("AceAddon-3.0"):NewAddon("Smarthealing")
 
 if not Smarthealing then return end
@@ -13,36 +18,6 @@ Smarthealing.RaidRoster = {}
 
 if not Smarthealing.events then
 	Smarthealing.events = LibStub("CallbackHandler-1.0"):New(Smarthealing)
-end
-
-function Smarthealing:OnUpdate(event, info)
-	if not info.name or not info.spec_role or not info.spec_role_detailed then return end
-	Smarthealing['RaidRoster'][info.name] = Smarthealing['RaidRoster'][info.name] or {}
-	Smarthealing['RaidRoster'][info.name]["name"] = info.name
-	Smarthealing['RaidRoster'][info.name]["role"] = info.spec_role_detailed
-	Smarthealing['RaidRoster'][info.name]["class"] = info.class
-end
-
-function Smarthealing:OnRemove(guid)
-	if (guid) then
-	    local name = select(6, GetPlayerInfoByGUID(guid))
-		if Smarthealing['RaidRoster'][name] then
-			Smarthealing['RaidRoster'][name] = nil
-		end
-	else
-		Smarthealing['RaidRoster'] = {}
-	end
-end
-
-local LGIST = LibStub:GetLibrary("LibGroupInSpecT-1.1")
-
-function Smarthealing:OnInitialize()
-	LGIST.RegisterCallback (Smarthealing, "GroupInSpecT_Update", function(event, ...)
-		Smarthealing.OnUpdate(...)
-	end)
-	LGIST.RegisterCallback (Smarthealing, "GroupInSpecT_Remove", function(...)
-		Smarthealing.OnRemove(...)
-	end)
 end
 
 G.encounter = "none"
@@ -61,6 +36,9 @@ G.Encounters = {
 		["mode"] = "S",
 		["debuffs"] = {
 		    [GetSpellInfo(244768)] = 40, -- 荒芜凝视
+			[GetSpellInfo(244091)] = 60, --烧焦
+			[GetSpellInfo(248815)] = 30, --燃烧腐蚀
+
 		},
 	},	
 	
@@ -68,11 +46,19 @@ G.Encounters = {
 		["mode"] = "G",
 		["debuffs"] = {
 			[GetSpellInfo(244737)] = 40, -- 震荡手雷
+			[GetSpellInfo(244172)] = 50, --灵能突袭
+			[GetSpellInfo(253037)] = 50, --恶魔冲锋
 		},
 	},	
 	
 	[2064] = {	--"Hasabel"
 		["mode"] = "G",
+		["debuffs"] = {
+			[GetSpellInfo(244613)] = 20, -- 永燃烈焰
+			[GetSpellInfo(244849)] = 20, -- 腐蚀烂泥
+			[GetSpellInfo(245075)] = 20, -- 饥饿幽影
+			[GetSpellInfo(245118)] = 20, -- 饱足幽影
+		},	
 	},
 	
 	[2075] = {	--"Eonar"
@@ -84,6 +70,14 @@ G.Encounters = {
 	
 	[2082] = {	--"Imonar"
 		["mode"] = "G",
+		["debuffs"] = {
+			[GetSpellInfo(250006)] = 25, -- 强化脉冲手雷
+			[GetSpellInfo(247716)] = 25, -- 充能轰炸
+			[GetSpellInfo(247932)] = 25, -- 霰弹爆破
+			[GetSpellInfo(248070)] = 25, -- 强化霰弹爆破
+			[GetSpellInfo(248321)] = 25, -- 洪荒烈火
+			[GetSpellInfo(248255)] = 25, -- 地狱火火箭
+		},
 	},	
 	
 	[2088] = {	--"Kingaroth"
@@ -112,6 +106,7 @@ G.Encounters = {
 	[2063] = {	--"Aggramar"
 		["mode"] = "S",
 		["debuffs"] = {
+			[GetSpellInfo(245994)] = 40, -- 灼热之焰
 		    [GetSpellInfo(254452)] = 70, -- 饕餮烈焰
 		},
 	},	
@@ -121,12 +116,20 @@ G.Encounters = {
 		["debuffs"] = {
 		    [GetSpellInfo(248396)] = 40, -- 灵魂凋零
 			[GetSpellInfo(250669)] = 40, -- 灵魂爆发
+			[GetSpellInfo(251570)] = 40, -- 灵魂炸弹
 			[GetSpellInfo(252729)] = 40, -- 宇宙射线
 		},
 	},	
 	
 	["none"] = {
 		["mode"] = "G",
+		["debuffs"] = {
+		    [GetSpellInfo(240559)] = 40, -- 重伤
+			[GetSpellInfo(243237)] = 40, -- 死疽
+		},
+		["spells"] = {
+			[774] = {event = "SPELL_CAST_SUCCESS", delay = 3, dur = 5, target = "healer"}
+		}
 	},
 }
 
@@ -182,7 +185,9 @@ G.Buffs = {
 	},
 }
 
-local function UpdateSurvival(parentFrame, text)
+local test = false
+
+local function UpdateText(parentFrame, text)
 	if not parentFrame.stext then
 		parentFrame.stext = parentFrame:CreateFontString(nil, "OVERLAY")
 		parentFrame.stext:SetFont("Interface\\AddOns\\Aurora\\media\\font.TTF", 12, "OUTLINE")
@@ -191,14 +196,16 @@ local function UpdateSurvival(parentFrame, text)
 	parentFrame.stext:SetText(text)
 end
 
-local function UpdateSurvivalOnRF(name)
+local function UpdateTextOnRF(name, text)
+	if not test then return end
+	
     local hasAltzUI = _G["Altz_HealerRaid"] and _G["Altz_HealerRaid"]:IsVisible()
     
     if hasAltzUI then
         for i = 1, 40 do
             local f = _G["Altz_HealerRaidUnitButton"..i]
             if f and f.unit and UnitName(f.unit) == name then
-                UpdateSurvival(f, Smarthealing['RaidRoster'][name]["sur"])
+                UpdateText(f, text)
                 return
             end
         end
@@ -217,8 +224,10 @@ GroupUpdater:RegisterEvent("UNIT_HEAL_PREDICTION")
 GroupUpdater:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
 GroupUpdater:RegisterEvent("UNIT_HEAL_ABSORB_AMOUNT_CHANGED")
 GroupUpdater:RegisterEvent("UNIT_CONNECTION")
+GroupUpdater:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 GroupUpdater:RegisterEvent("ENCOUNTER_START")
 GroupUpdater:RegisterEvent("ENCOUNTER_END")
+GroupUpdater:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 GroupUpdater.UpdateInRange = function(name)
 	Smarthealing['RaidRoster'][name]["inRange"] = UnitInRange(name)
@@ -257,10 +266,12 @@ GroupUpdater.UpdateSurvival = function(name)
 	local heal_absorb = UnitGetTotalHealAbsorbs(name) or 0
 	
 	if hp and hp_max and hp_max > 0 then
-	
-		for debuff, effect in pairs(G.Encounters[G.encounter]) do
-			if UnitDebuff(name, debuff) then
-				debuff_effect = debuff_effect + effect
+		
+		if G.Encounters[G.encounter]["debuffs"] then
+			for debuff, effect in pairs(G.Encounters[G.encounter]["debuffs"]) do
+				if UnitDebuff(name, debuff) then
+					debuff_effect = debuff_effect + effect
+				end
 			end
 		end
 		
@@ -279,19 +290,79 @@ GroupUpdater.UpdateSurvival = function(name)
 		end
 		
 		Smarthealing['RaidRoster'][name]["sur"] = floor((hp + hp_incoming*.7 + hp_absorb - heal_absorb)/hp_max*100) - debuff_effect + buff_effect
-		UpdateSurvivalOnRF(name)
+	end
+end
+
+GroupUpdater.UpdateHealblock = function(name)
+	if UnitDebuff(name, GetSpellInfo(243961)) then -- 哀难
+		Smarthealing['RaidRoster'][name]["heal_block"] = 100
+	elseif UnitDebuff(name, GetSpellInfo(209858)) then -- 死疽
+		local count = select(4, UnitDebuff(name, GetSpellInfo(209858)))
+		Smarthealing['RaidRoster'][name]["heal_block"] = 3*count
+	else
+		Smarthealing['RaidRoster'][name]["heal_block"] = 0
+	end
+end
+
+local function CreateUpdater(DestName, target, t1, t2)
+	local f = CreateFrame("Frame")
+	f.t1 = t1
+	f.t2 = t1+t2
+	
+	f:SetScript("OnUpdate", function(self, e)
+		f.t1 = f.t1 - e
+		f.t2 = f.t2 - e
+		if f.t1 < 0 and not f.start then		
+			f.start = true
+			for name, info in pairs(Smarthealing['RaidRoster']) do
+				if target == "all" then
+					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] + 1
+				elseif target == info.role or (target == "ranged_healer" and (info.role == "ranged" or info.role == "healer")) then
+					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] + 1
+				elseif target == "target" and name == DestName then
+					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] + 1
+				end
+				UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["hot"])
+			end
+		end
+		if f.t2 < 0 then
+			self:SetScript("OnUpdate", nil)
+			for name, info in pairs(Smarthealing['RaidRoster']) do
+				if target == "all" then
+					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] - 1
+				elseif target == info.role or (target == "ranged_healer" and (info.role == "ranged" or info.role == "healer")) then
+					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] - 1
+				elseif target == "target" and name == DestName then
+					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] - 1
+				end
+				UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["hot"])
+			end
+		end
+	end)
+	
+	f:RegisterEvent("PLAYER_REGEN_ENABLED")
+	f:SetScript("OnEvent", function(self, event)
+		self:SetScript("OnUpdate", nil)
+	end)
+end
+
+GroupUpdater.ResetInComingDmg = function()
+	for name, info in pairs(Smarthealing['RaidRoster']) do
+		Smarthealing['RaidRoster'][name]["hot"] = 0
+		UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["hot"])
+	end
+end
+
+GroupUpdater.UpdateInComingDmg = function(Event_type, SpellID, DestName)
+	if G.Encounters[G.encounter]["spells"] then
+		if G.Encounters[G.encounter]["spells"][SpellID] and G.Encounters[G.encounter]["spells"][SpellID]["event"] == Event_type then
+			CreateUpdater(DestName, G.Encounters[G.encounter]["spells"][SpellID]["target"], G.Encounters[G.encounter]["spells"][SpellID]["delay"], G.Encounters[G.encounter]["spells"][SpellID]["dur"])
+		end
 	end
 end
 
 GroupUpdater:SetScript("OnEvent", function(self, event, ...)
-	if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
-		for name, info in pairs(Smarthealing['RaidRoster']) do
-			GroupUpdater.UpdateActive(name)
-			GroupUpdater.UpdateHealth(name)
-			GroupUpdater.UpdateSurvival(name)
-			GroupUpdater.UpdateInRange(name)
-		end
-	elseif event == "UNIT_CONNECTION" then
+	if event == "UNIT_CONNECTION" then
 		local unit = ...
 		local name = UnitName(unit)
 		if Smarthealing['RaidRoster'][name] then
@@ -311,6 +382,14 @@ GroupUpdater:SetScript("OnEvent", function(self, event, ...)
 		if Smarthealing['RaidRoster'][name] then
 			GroupUpdater.UpdateSurvival(name)
 		end
+	elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+		local Time_stamp, Event_type, _, _, SourceName, _, _, _, DestName, _, _, SpellID = ...
+		-- 检查致死效果
+		if string.find(Event_type, "AURA") and Smarthealing['RaidRoster'][DestName] then
+			GroupUpdater.UpdateHealblock(DestName)
+		end
+		-- 检查伤害预判
+		GroupUpdater.UpdateInComingDmg(Event_type, SpellID, DestName)
 	elseif event == "ENCOUNTER_START" then
 		local encounterID, encounterName, difficultyID, groupSize = ...
 		if G.Encounters[encounterID] then
@@ -320,6 +399,8 @@ GroupUpdater:SetScript("OnEvent", function(self, event, ...)
 	elseif event == "ENCOUNTER_END" then
 		encounter = "none"
 		difficulty = "none"
+	elseif event == "PLAYER_REGEN_ENABLED" then
+		GroupUpdater.ResetInComingDmg()
 	end
 end)
 
@@ -333,3 +414,40 @@ GroupUpdater:SetScript("OnUpdate", function(self, e)
 		self.t = 0
 	end
 end)
+
+function Smarthealing:OnUpdate(event, info)
+	if not info.name or not info.spec_role or not info.spec_role_detailed then return end
+	Smarthealing['RaidRoster'][info.name] = Smarthealing['RaidRoster'][info.name] or {}
+	Smarthealing['RaidRoster'][info.name]["name"] = info.name
+	Smarthealing['RaidRoster'][info.name]["role"] = info.spec_role_detailed
+	Smarthealing['RaidRoster'][info.name]["class"] = info.class
+	Smarthealing['RaidRoster'][info.name]["hot"] = 0	
+	GroupUpdater.UpdateActive(info.name)
+	GroupUpdater.UpdateHealth(info.name)
+	GroupUpdater.UpdateSurvival(info.name)
+	GroupUpdater.UpdateHealblock(info.name)
+	GroupUpdater.UpdateInRange(info.name)
+	UpdateTextOnRF(info.name, Smarthealing['RaidRoster'][info.name]["hot"])
+end
+
+function Smarthealing:OnRemove(guid)
+	if (guid) then
+	    local name = select(6, GetPlayerInfoByGUID(guid))
+		if Smarthealing['RaidRoster'][name] then
+			Smarthealing['RaidRoster'][name] = nil
+		end
+	else
+		Smarthealing['RaidRoster'] = {}
+	end
+end
+
+local LGIST = LibStub:GetLibrary("LibGroupInSpecT-1.1")
+
+function Smarthealing:OnInitialize()
+	LGIST.RegisterCallback (Smarthealing, "GroupInSpecT_Update", function(event, ...)
+		Smarthealing.OnUpdate(...)
+	end)
+	LGIST.RegisterCallback (Smarthealing, "GroupInSpecT_Remove", function(...)
+		Smarthealing.OnRemove(...)
+	end)
+end

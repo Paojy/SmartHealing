@@ -1,8 +1,11 @@
 ﻿## Interface: 70200
 ## Title: |cffEE3A8CSmartHealing|r
-## Version: 0.2
+## Version: 0.3
 ## Author: Paopao001
+## SavedVariables: SH_DB
+## SavedVariablesPerCharacter: SH_CDB
 
 libs\load_libs.xml
 init.lua
+gui.lua
 core.lua
