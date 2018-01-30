@@ -128,7 +128,7 @@ G.Encounters = {
 			[GetSpellInfo(243237)] = 40, -- 死疽
 		},
 		["spells"] = {
-			[774] = {event = "SPELL_CAST_SUCCESS", delay = 3, dur = 5, target = "healer"}
+			--[774] = {event = "SPELL_CAST_SUCCESS", delay = 3, dur = 5, target = "healer"}
 		}
 	},
 }
@@ -289,7 +289,8 @@ GroupUpdater.UpdateSurvival = function(name)
 			end
 		end
 		
-		Smarthealing['RaidRoster'][name]["sur"] = floor((hp + hp_incoming*.7 + hp_absorb - heal_absorb)/hp_max*100) - debuff_effect + buff_effect
+		Smarthealing['RaidRoster'][name]["sur"] = floor((hp + hp_incoming + hp_absorb - heal_absorb)/hp_max*100) - debuff_effect + buff_effect
+		Smarthealing['RaidRoster'][name]["dmg"] = - debuff_effect + buff_effect
 	end
 end
 
@@ -316,26 +317,26 @@ local function CreateUpdater(DestName, target, t1, t2)
 			f.start = true
 			for name, info in pairs(Smarthealing['RaidRoster']) do
 				if target == "all" then
-					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] + 1
+					Smarthealing['RaidRoster'][name]["icd"] = Smarthealing['RaidRoster'][name]["icd"] + 1
 				elseif target == info.role or (target == "ranged_healer" and (info.role == "ranged" or info.role == "healer")) then
-					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] + 1
+					Smarthealing['RaidRoster'][name]["icd"] = Smarthealing['RaidRoster'][name]["icd"] + 1
 				elseif target == "target" and name == DestName then
-					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] + 1
+					Smarthealing['RaidRoster'][name]["icd"] = Smarthealing['RaidRoster'][name]["icd"] + 1
 				end
-				UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["hot"])
+				UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["icd"])
 			end
 		end
 		if f.t2 < 0 then
 			self:SetScript("OnUpdate", nil)
 			for name, info in pairs(Smarthealing['RaidRoster']) do
 				if target == "all" then
-					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] - 1
+					Smarthealing['RaidRoster'][name]["icd"] = Smarthealing['RaidRoster'][name]["icd"] - 1
 				elseif target == info.role or (target == "ranged_healer" and (info.role == "ranged" or info.role == "healer")) then
-					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] - 1
+					Smarthealing['RaidRoster'][name]["icd"] = Smarthealing['RaidRoster'][name]["icd"] - 1
 				elseif target == "target" and name == DestName then
-					Smarthealing['RaidRoster'][name]["hot"] = Smarthealing['RaidRoster'][name]["hot"] - 1
+					Smarthealing['RaidRoster'][name]["icd"] = Smarthealing['RaidRoster'][name]["icd"] - 1
 				end
-				UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["hot"])
+				UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["icd"])
 			end
 		end
 	end)
@@ -348,8 +349,8 @@ end
 
 GroupUpdater.ResetInComingDmg = function()
 	for name, info in pairs(Smarthealing['RaidRoster']) do
-		Smarthealing['RaidRoster'][name]["hot"] = 0
-		UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["hot"])
+		Smarthealing['RaidRoster'][name]["icd"] = 0
+		UpdateTextOnRF(name, Smarthealing['RaidRoster'][name]["icd"])
 	end
 end
 
@@ -421,13 +422,13 @@ function Smarthealing:OnUpdate(event, info)
 	Smarthealing['RaidRoster'][info.name]["name"] = info.name
 	Smarthealing['RaidRoster'][info.name]["role"] = info.spec_role_detailed
 	Smarthealing['RaidRoster'][info.name]["class"] = info.class
-	Smarthealing['RaidRoster'][info.name]["hot"] = 0	
+	Smarthealing['RaidRoster'][info.name]["icd"] = 0	
 	GroupUpdater.UpdateActive(info.name)
 	GroupUpdater.UpdateHealth(info.name)
 	GroupUpdater.UpdateSurvival(info.name)
 	GroupUpdater.UpdateHealblock(info.name)
 	GroupUpdater.UpdateInRange(info.name)
-	UpdateTextOnRF(info.name, Smarthealing['RaidRoster'][info.name]["hot"])
+	UpdateTextOnRF(info.name, Smarthealing['RaidRoster'][info.name]["icd"])
 end
 
 function Smarthealing:OnRemove(guid)

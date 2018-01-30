@@ -1,6 +1,6 @@
 ﻿## Interface: 70200
 ## Title: |cffEE3A8CSmartHealing|r
-## Version: 0.3
+## Version: 0.4
 ## Author: Paopao001
 ## SavedVariables: SH_DB
 ## SavedVariablesPerCharacter: SH_CDB

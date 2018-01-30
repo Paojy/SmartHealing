@@ -8,7 +8,7 @@ local my_class = select(2, UnitClass("player"))
 local my_name = UnitName("player")
 local my_spec = 0
 local safe_perc = 95
-local ae_perc = 60
+local ae_perc = 70
 local ismoving = false
 ----------------------------------------------------------
 --------------------[[     API     ]]---------------------
@@ -138,13 +138,13 @@ F.GetLowSurvivalTanking = function()
 
 end
 
-F.GetBuffTargetInRange = function(num, ...)
+F.GetBuffTargetInRange = function(num, incoming_dmg, ...)
 	local t = {}
 	local buffs = {...}
 	
 	if IsInGroup() then
 		for name, info in pairs(Smarthealing['RaidRoster']) do
-			if info.inRange and info.active and info.sur then
+			if info.inRange and info.active and info.sur and (info.sur < safe_perc or not incoming_dmg or (info.icd and info.icd > 0)) then
 				local missing_buff = 0
 				for k, spellID in pairs(buffs) do
 					local buff_name = GetSpellInfo(spellID)
@@ -174,28 +174,6 @@ F.GetHealBlockInRange = function()
 	if IsInGroup() then
 		for name, info in pairs(Smarthealing['RaidRoster']) do
 			if info.inRange and info.active and info.sur and info.heal_block and info.heal_block >= 50 then
-				table.insert(t, info)
-			end
-		end
-	else
-		return
-	end
-	
-	table.sort(t, function(a,b) return a.sur < b.sur or (a.sur == b.sur and a.hp < b.hp) end) -- 按照生存系数排序
-	
-	if #t > 0 then
-		return t[1]["name"], t[1]["sur"], #t
-	end
-end
-
-F.GetHotTargetsInRange = function()
-	if not SH_CDB["General"]["hot"] then return end
-	
-	local t = {}
-	
-	if IsInGroup() then
-		for name, info in pairs(Smarthealing['RaidRoster']) do
-			if info.inRange and info.active and info.hot and info.hot > 0 then
 				table.insert(t, info)
 			end
 		end
@@ -240,13 +218,13 @@ F.GetBuffedTargetInRange = function(num, ...)
 	end
 end
 
-F.GetBuffTankOrMeInRange = function(num, ...)
+F.GetBeaconTarget = function(num, ...)
 	local t = {}
 	local buffs = {...}
 	
 	if IsInGroup() then
 		for name, info in pairs(Smarthealing['RaidRoster']) do
-			if info.inRange and info.active and info.sur and (info.role and info.role == "tank" or info.name == my_name) then
+			if info.inRange and info.active and info.sur and ((info.role and info.role == "tank") or (not IsInRaid() and info.name == my_name)) then
 				local missing_buff = 0
 				for k, spellID in pairs(buffs) do
 					local buff_name = GetSpellInfo(spellID)
@@ -270,15 +248,13 @@ F.GetBuffTankOrMeInRange = function(num, ...)
 	end
 end
 
-local GroupNeedHeal = function()
+local GroupNeedHeal = function() -- 奶德/戒律不适用
 	local t = {}
 	
 	if IsInGroup() then
 		for name, info in pairs(Smarthealing['RaidRoster']) do
 			if info.active then
 				if info.hp_perc and info.hp_perc <= safe_perc then
-					return true
-				elseif SH_CDB["General"]["hot"] and info.hot and info.hot > 0 then
 					return true
 				end
 			end
@@ -319,40 +295,18 @@ local IsItemUsable = function(itemID)
 	end
 end
 
-local UseTrinkets = function(name, sur)
+local UseTrinkets = function(name)
 	if not SH_CDB["General"]["trinkets"] then return true end
 	
-	local heal_absorb = UnitGetTotalHealAbsorbs(name)
-	local hp_max = UnitHealthMax(name)
-	local sur_no_absorb
-	if heal_absorb and hp_max and hp_max > 0 then			
-		sur_no_absorb = sur - heal_absorb/hp_max*100 -- 排除吸收因素
-	end
+	local info = Smarthealing['RaidRoster'][name]
 	
-	if sur_no_absorb and sur_no_absorb < 25 then -- 可以用吸收类饰品
+	if info.dmg >= 50 then -- 可以用吸收类饰品
 		if IsItemUsable(151957) then -- 邪能护盾
 			return 253277, name
 		elseif IsItemUsable(147007) then -- 蓝图
 			return 242622, name
 		end
 	elseif IsItemUsable(147006) then -- 信仰档案
-		return 242619, name
-	end
-end
-
-local UseDefensiveCD = function(spellID, tpye, sur)
-	if not SH_CDB["General"]["cd"] then return true end
-	
-	local heal_absorb = UnitGetTotalHealAbsorbs(name)
-	local hp_max = UnitHealthMax(name)
-	local sur_no_absorb
-	if heal_absorb and hp_max and hp_max > 0 then			
-		sur_no_absorb = sur - heal_absorb/hp_max*100 -- 排除吸收因素
-	end
-	
-	if sur_no_absorb and sur_no_absorb < 25 then -- 可以用减伤技能
-		
-	elseif IsItemUsable(147006) then -- 守护之魂
 		return 242619, name
 	end
 end
@@ -603,22 +557,6 @@ end
 ----------------------------------------------------------
 -------------------[[     刷新     ]]---------------------
 ----------------------------------------------------------
-
---[[ Spell ID
-
-	激流 61295
-	治疗波 77472
-	治疗之涌 8004
-	治疗链 1064(115175替换)
-	
-	潮汐奔涌 53390
-	女王崛起 207228
-	先祖指引 108281
-	暴雨 157503
-	升腾 114052
-	
-]]--
-
 local SmartSpells = {
 	SHAMAN = {},
 	PALADIN = {},
@@ -641,15 +579,15 @@ SmartSpells["SHAMAN"] = function(mode)
 		
 			if IsSpellUsable(61295) then -- 能用激流用激流
 				G.current_spell, G.current_target = 61295, target
-			elseif perc < 25 then -- 紧急救人
-				if UseTrinkets(target, perc) then
-					G.current_spell, G.current_target = UseTrinkets(target, perc)
+			elseif perc < 30 then -- 紧急救人
+				if UseTrinkets(target) then
+					G.current_spell, G.current_target = UseTrinkets(target)
 				else
 					G.current_spell, G.current_target = 8004, target
 				end
 			elseif HasBuff(157503) and (HasBuff(114052) or HasBuff(108281)) then -- 暴雨 + 升腾/先祖
-				local melee_chain_target, _, melee_num = F.GetLowSurvivalInRangeForMelee(ae_perc*1.3)
-				local range_chain_target, _, range_num = F.GetLowSurvivalInRangeForRanged(ae_perc*1.3)
+				local melee_chain_target, _, melee_num = F.GetLowSurvivalInRangeForMelee(ae_perc)
+				local range_chain_target, _, range_num = F.GetLowSurvivalInRangeForRanged(ae_perc)
 				if perc < 60 and SH_CDB["General"]["trinkets"] and IsItemUsable(147006) then
 					G.current_spell, G.current_target = 242619, target
 				elseif melee_num and melee_num >= 3 then
@@ -662,7 +600,7 @@ SmartSpells["SHAMAN"] = function(mode)
 			elseif range_lowhp and range_lowhp >= 3 then
 				G.current_spell, G.current_target = 1064, range_target
 			elseif HasBuff(53390) then -- 有潮汐奔涌
-				if perc < 40 then -- 血量小于50%用治疗之涌
+				if perc < 50 then -- 血量小于50%用治疗之涌
 					G.current_spell, G.current_target = 8004, target
 				else -- 血量大于50%用治疗波
 					G.current_spell, G.current_target = 77472, target
@@ -675,14 +613,14 @@ SmartSpells["SHAMAN"] = function(mode)
 	
 			if IsSpellUsable(61295) then -- 能用激流用激流
 				G.current_spell, G.current_target = 61295, target
-			elseif perc < 25 then -- 紧急救人
-				if UseTrinkets(target, perc) then
-					G.current_spell, G.current_target = UseTrinkets(target, perc)
+			elseif perc < 30 then -- 紧急救人
+				if UseTrinkets(target) then
+					G.current_spell, G.current_target = UseTrinkets(target)
 				else
 					G.current_spell, G.current_target = 8004, target
 				end
 			elseif HasBuff(157503) and (HasBuff(114052) or HasBuff(108281)) then -- 暴雨 + 升腾/先祖
-				local chain_target, _, chain_num = F.GetLowSurvivalInRange(ae_perc*1.3)
+				local chain_target, _, chain_num = F.GetLowSurvivalInRange(ae_perc)
 				if perc < 60 and SH_CDB["General"]["trinkets"] and IsItemUsable(147006) then
 					G.current_spell, G.current_target = 242619, target
 				elseif chain_num and chain_num >= 4 then
@@ -707,7 +645,7 @@ SmartSpells["PALADIN"] = function(mode)
 	if my_spec ~= 1 then return end
 	
 	if GetCountofBuff(53563) == 0 or (IsTalentChosen(7, 1) and GetCountofBuff(156910)==0) then -- 需要上道标
-		local beacon_target = F.GetBuffTankOrMeInRange(1, 53563, 156910)
+		local beacon_target = F.GetBeaconTarget(1, 53563, 156910)
 		G.current_spell, G.current_target = 53563, beacon_target
 	elseif not GroupNeedHeal() then --所有血量都大于安全血线
 		G.current_spell, G.current_target = nil, nil
@@ -716,9 +654,9 @@ SmartSpells["PALADIN"] = function(mode)
 		local tank_target, tank_perc = F.GetLowSurvivalTankOrMe()		
 		if IsSpellUsable(20473) then -- 震击好了用震击
 			G.current_spell, G.current_target = 20473, target
-		elseif target and perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
-			G.current_spell, G.current_target = UseTrinkets(target, perc)
-		elseif target and perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(6940) then -- 牺牲
+		elseif target and perc < 30 and UseTrinkets(target) then -- 紧急救人
+			G.current_spell, G.current_target = UseTrinkets(target)
+		elseif target and perc < 30 and SH_CDB["General"]["cd"] and IsSpellUsable(6940) then -- 牺牲
 			G.current_spell, G.current_target = 6940, target
 		elseif IsSpellUsable(223306) then -- 赋予信仰好了给坦克或者自己用
 			G.current_spell, G.current_target = 223306, tank_target
@@ -749,17 +687,16 @@ SmartSpells["DRUID"] = function(mode)
 	
 	local target, perc = F.GetLowSurvivalInRange() -- 安全血线以下的人
 	
-	local target_rej, perc_rej = F.GetBuffTargetInRange(1, 774, 155777) -- 无回春
-	local target_rej2, perc_rej2 = F.GetBuffTargetInRange(0, 774, 155777) -- 无双回春
-	local target_rej3, perc_rej3 = F.GetBuffTargetInRange(2, 48438, 774, 155777) -- 无野性成长无回春的人
+	local target_rej, perc_rej = F.GetBuffTargetInRange(1, true, 774, 155777) -- 无回春
+	local target_rej2, perc_rej2 = F.GetBuffTargetInRange(0, true, 774, 155777) -- 无双回春
 	local low_target, low_perc, num_lowhp = F.GetLowSurvivalInRange(ae_perc) -- 低血量
 	
 	local tanking_target = F.GetLowSurvivalTanking()
 	
 	if target and perc < 40 then
-		if perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
-			G.current_spell, G.current_target = UseTrinkets(target, perc)
-		elseif perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(102342) then -- 铁木树皮
+		if perc < 30 and UseTrinkets(target) then -- 紧急救人
+			G.current_spell, G.current_target = UseTrinkets(target)
+		elseif perc < 30 and SH_CDB["General"]["cd"] and IsSpellUsable(102342) then -- 铁木树皮
 			G.current_spell, G.current_target = 102342, target
 		elseif not (HasBuff(774, target) or HasBuff(155777, target)) then -- 没回春
 			G.current_spell, G.current_target = 774, target
@@ -770,8 +707,6 @@ SmartSpells["DRUID"] = function(mode)
 		else -- 愈合
 			G.current_spell, G.current_target = 8936, target
 		end
-	elseif IsTalentChosen(5, 3) and perc_rej and perc_rej < 60 then -- 可触发栽培
-		G.current_spell, G.current_target = 774, target_rej
 	elseif IsSpellUsable(102351) and target and  perc < 50 then -- 结界
 		G.current_spell, G.current_target = 102351, target
 	elseif IsSpellUsable(102351) and tanking_target then -- 结界
@@ -781,27 +716,25 @@ SmartSpells["DRUID"] = function(mode)
 	elseif HasBuff(16870) and tanking_target and (not UnitCastingInfo("player") or select(10, UnitCastingInfo("player")) ~= 8936) then -- 有节能施法
 		G.current_spell, G.current_target = 8936, tanking_target
 	elseif GetCountofBuff(33763) == 0 and tanking_target then -- 生命绽放
-		G.current_spell, G.current_target = 33763, tanking_target		
+		G.current_spell, G.current_target = 33763, tanking_target
+	elseif IsTalentChosen(5, 3) and perc_rej and perc_rej < 60 then -- 可触发栽培
+		G.current_spell, G.current_target = 774, target_rej
 	elseif num_lowhp and num_lowhp > 3 and IsSpellUsable(48438) and (not UnitCastingInfo("player") or select(10, UnitCastingInfo("player")) ~= 48438) then -- 野性成长
 		G.current_spell, G.current_target = 48438, low_target
 	elseif tanking_target and not (HasBuff(774, tanking_target) or HasBuff(155777, tanking_target)) then -- T没回春
 		G.current_spell, G.current_target = 774, tanking_target
 	elseif IsTalentChosen(6, 3) and tanking_target and not (HasBuff(774, tanking_target) and HasBuff(155777, tanking_target)) then -- 补满T双回春
 		G.current_spell, G.current_target = 774, tanking_target
-	elseif target_rej and perc_rej < safe_perc then
+	elseif target_rej then
 		G.current_spell, G.current_target = 774, target_rej
-	elseif IsTalentChosen(6, 3) and target_rej2 and perc_rej2 < safe_perc then
-		G.current_spell, G.current_target = 774, target_rej2
+	elseif IsTalentChosen(6, 3) and target_rej2 then
+		G.current_spell, G.current_target = 774, target_rej2	
 	elseif target and perc < safe_perc and (not UnitCastingInfo("player") or select(10, UnitCastingInfo("player")) ~= 8936) then
 		if InCombatLockdown() then
 			G.current_spell, G.current_target = 8936, target
 		else
 			G.current_spell, G.current_target = 5185, target
 		end
-	elseif target_rej then
-		G.current_spell, G.current_target = 774, target_rej
-	elseif UnitAffectingCombat("player") and IsTalentChosen(6, 3) and target_rej2 then
-		G.current_spell, G.current_target = 774, target_rej2
 	else
 		G.current_spell, G.current_target = nil, nil
 	end
@@ -811,8 +744,8 @@ end
 SmartSpells["PRIEST"] = function(mode)
 	if my_spec == 1 then -- 戒律
 		local target, perc = F.GetLowSurvivalInRange() -- 安全血线以下的人
-		local target_pws, perc_pws = F.GetBuffTargetInRange(0, 17) -- 无盾的血量最低的人
-		local target_ato, perc_ato = F.GetBuffTargetInRange(0, 194384) -- 无救赎的血量最低的人
+		local target_pws, perc_pws = F.GetBuffTargetInRange(0, true, 17) -- 无盾的血量最低的人
+		local target_ato, perc_ato = F.GetBuffTargetInRange(0, true, 194384) -- 无救赎的血量最低的人
 		local tanking_target, tanking_perc = F.GetLowSurvivalTanking()
 		
 		if not InCombatLockdown() then -- 脱离战斗时
@@ -825,9 +758,9 @@ SmartSpells["PRIEST"] = function(mode)
 			end
 		elseif target and perc < 30 and IsSpellUsable(47540) then -- 苦修
 			G.current_spell, G.current_target = 47540, target
-		elseif target and perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
-			G.current_spell, G.current_target = UseTrinkets(target, perc)
-		elseif perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(33206) then -- 痛苦压制
+		elseif target and perc < 30 and UseTrinkets(target) then -- 紧急救人
+			G.current_spell, G.current_target = UseTrinkets(target)
+		elseif perc < 30 and SH_CDB["General"]["cd"] and IsSpellUsable(33206) then -- 痛苦压制
 			G.current_spell, G.current_target = 33206, target
 		elseif target_ato and IsInRaid() and GetCountofBuff(194384) <= 5 and IsSpellUsable(194509) then
 			G.current_spell, G.current_target = 194509, target_ato -- 真言术：耀
@@ -859,14 +792,14 @@ SmartSpells["PRIEST"] = function(mode)
 		else
 			local target, perc = F.GetLowSurvivalInRange() -- 安全血线以下的人
 			local low_target, low_perc, num_lowhp = F.GetLowSurvivalInRange(ae_perc) -- 低血量
-			local target_mending, perc_mending = F.GetBuffTargetInRange(0, 33076) -- 无愈合祷言的人
+			local target_mending, perc_mending = F.GetBuffTargetInRange(0, false, 33076) -- 无愈合祷言的人
 			local tanking_target, tanking_perc = F.GetLowSurvivalTanking()
 			
 			if target and perc < 50 and IsSpellUsable(2050) then -- 静
 				G.current_spell, G.current_target = 2050, target
-			elseif target and perc < 25 and UseTrinkets(target, perc) then -- 紧急救人
-				G.current_spell, G.current_target = UseTrinkets(target, perc)
-			elseif perc < 25 and SH_CDB["General"]["cd"] and IsSpellUsable(47788) then -- 守护之魂
+			elseif target and perc < 30 and UseTrinkets(target) then -- 紧急救人
+				G.current_spell, G.current_target = UseTrinkets(target)
+			elseif perc < 30 and SH_CDB["General"]["cd"] and IsSpellUsable(47788) then -- 守护之魂
 				G.current_spell, G.current_target = 47788, target
 			elseif target and perc < 70 and IsSpellUsable(208065) and not HasBuff(208065, target) then -- 图雷
 				G.current_spell, G.current_target = 208065, target
