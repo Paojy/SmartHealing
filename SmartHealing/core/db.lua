@@ -532,8 +532,6 @@ function F.LoadAccountVariables()
 				if SH_DB[a][k] == nil then
 					if v then
 						SH_DB[a][k] = v
-					else
-						print(a,k)
 					end
 				end
 			end
@@ -645,7 +643,6 @@ F.GetExportString = function()
 				end
 			else
 				for id, v in pairs(t[key]) do
-					print(id, v)
 					str = str.."^"..i.."~"..key.."~"..id
 				end
 			end
