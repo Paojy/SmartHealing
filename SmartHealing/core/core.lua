@@ -446,7 +446,9 @@ F.SH_ShowHideIcon_RF = function(target, action, spellID)
     local hasVuhDo = IsAddOnLoaded("VuhDo")
     local hasElvUI = _G["ElvUF_Raid"] and _G["ElvUF_Raid"]:IsVisible()
     local hasAltzUI = _G["Altz_HealerRaid"] and _G["Altz_HealerRaid"]:IsVisible()
-    
+    local hasCell = IsAddOnLoaded("Cell")
+	
+
     if hasElvUI then
         for i=1, 8 do
             for j=1, 5 do
@@ -521,6 +523,23 @@ F.SH_ShowHideIcon_RF = function(target, action, spellID)
             end
         end
 		
+	elseif hasCell then
+        for i =1, 5 do 
+            local f = _G["CellPartyFrameHeaderUnitButton"..i]
+            if f and f:IsVisible() and f.state and f.state.unit and UnitName(f.state.unit) == target then
+                addIcon(f, action, spellID)
+                return
+            end
+        end
+		for i=1, 4 do
+            for j=1, 5 do
+                local f = _G["CellGroupHeaderSubGroup"..i.."UnitButton"..j]
+                if f and f:IsVisible() and f.state and f.state.unit and UnitName(f.state.unit) == target then
+                    addIcon(f, action, spellID)
+                    return
+                end
+            end
+        end
     else
         for i=1, 40 do
             local f = _G["CompactRaidFrame"..i]
